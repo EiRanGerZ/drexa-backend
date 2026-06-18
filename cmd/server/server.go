@@ -15,6 +15,7 @@ import (
 	authRepo "drexa/internal/auth/repository"
 	authSvc "drexa/internal/auth/service"
 	authUc "drexa/internal/auth/usecase"
+	"drexa/internal/checkout"
 	"drexa/internal/kyc"
 	kycRepo "drexa/internal/kyc/repository"
 	kycSvc "drexa/internal/kyc/service"
@@ -100,8 +101,11 @@ func NewServer(cfg *config.Config, db *gorm.DB) *Server {
 	depositRepository    := walletRepo.NewDepositRepository(db)
 	withdrawalRepository := walletRepo.NewWithdrawalRepository(db)
 	cryptoAddressRepo    := walletRepo.NewCryptoAddressRepository(db)
-	paymentService       := walletSvc.NewNullPaymentService()
-	cryptoProvider       := walletSvc.NewTatumService(cfg.Tatum, "https://api.tatum.io")
+	paymentService := walletSvc.NewNullPaymentService()
+	if cfg.Stripe.SecretKey != "" {
+		paymentService = walletSvc.NewStripePaymentService(cfg.Stripe.SecretKey, cfg.SendGrid.AppURL)
+	}
+	cryptoProvider       := walletSvc.NewTatumService(cfg.Tatum.APIKey, "https://api.tatum.io")
 	txManager            := walletRepo.NewTxManager(db)
 	
 	walletUsecase        := walletUc.NewWalletUsecase(walletRepository, txRepository, depositRepository, withdrawalRepository, paymentService, cryptoProvider, txManager)
@@ -113,9 +117,23 @@ func NewServer(cfg *config.Config, db *gorm.DB) *Server {
 	go marketHub.Run()
 	go market.NewBinanceWSClient(marketHub).Run()
 
+	// ── Checkout domain ───────────────────────────────────────────────────────
+	var checkoutHandler *checkout.Handler
+	if cfg.Stripe.SecretKey != "" {
+		purchaseRepo := checkout.NewPurchaseRepository(db)
+		checkoutSvc := checkout.NewCheckoutService(
+			cfg.Stripe.SecretKey,
+			cfg.Stripe.WebhookSecret,
+			cfg.SendGrid.AppURL, // Reusing AppURL as the base URL
+			purchaseRepo,
+			userRepo,
+		)
+		checkoutHandler = checkout.NewHandler(checkoutSvc, getUserID)
+	}
+
 	// ── HTTP ──────────────────────────────────────────────────────────────────
 	mux := http.NewServeMux()
-	addRoutes(mux, authUsecase, kycHandler, orderService, walletUsecase, adminWalletUsecase, cryptoWalletUsecase, marketHub, tokenService)
+	addRoutes(mux, cfg, authUsecase, kycHandler, orderService, walletUsecase, adminWalletUsecase, cryptoWalletUsecase, marketHub, tokenService, checkoutHandler)
 
 	handler := middleware.RequestID(mux)
 
