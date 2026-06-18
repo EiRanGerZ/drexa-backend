@@ -158,6 +158,36 @@ func (s *service) applyResult(ctx context.Context, taker *Order, result matching
 	return s.repo.Update(ctx, taker)
 }
 
+// GetOrderBook returns a depth snapshot of a pair's resting book, converting
+// the engine's integer ticks/lots back into the pair's human-readable units.
+func (s *service) GetOrderBook(ctx context.Context, pairID string, depth int) (*OrderBook, error) {
+	pair, err := s.pairs.GetPair(ctx, pairID)
+	if err != nil {
+		return nil, err
+	}
+
+	snap := s.matcher.Snapshot(pairID, depth)
+
+	ob := &OrderBook{
+		PairID: pairID,
+		Bids:   make([]OrderBookLevel, 0, len(snap.Bids)),
+		Asks:   make([]OrderBookLevel, 0, len(snap.Asks)),
+	}
+	for _, l := range snap.Bids {
+		ob.Bids = append(ob.Bids, OrderBookLevel{
+			Price:    ticksToPrice(l.Price, pair.PriceDecimals),
+			Quantity: lotsToQty(l.Quantity),
+		})
+	}
+	for _, l := range snap.Asks {
+		ob.Asks = append(ob.Asks, OrderBookLevel{
+			Price:    ticksToPrice(l.Price, pair.PriceDecimals),
+			Quantity: lotsToQty(l.Quantity),
+		})
+	}
+	return ob, nil
+}
+
 // CancelOrder removes a still-open order from the book and marks it cancelled.
 func (s *service) CancelOrder(ctx context.Context, userID, orderID string) (*Order, error) {
 	o, err := s.repo.FindByID(ctx, orderID)

@@ -112,6 +112,8 @@ func addRoutes(
 
 	// ── Market data (public real-time WebSocket feed) ─────────────────────────
 	mux.Handle("/api/v1/market/ws", market.HandleWebSocket(marketHub))
+	// Order book depth snapshot (public market data).
+	mux.Handle("GET /api/v1/market/orderbook/{pairID}", order.HandleOrderBook(orderSvc))
 
 	// ── P2P marketplace (on-chain escrow) ─────────────────────────────────────
 	// Advertisements
