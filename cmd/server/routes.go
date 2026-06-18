@@ -5,7 +5,9 @@ import (
 
 	"drexa/internal/auth"
 	"drexa/internal/kyc"
+	"drexa/internal/market"
 	"drexa/internal/order"
+	"drexa/internal/wallet"
 )
 
 func addRoutes(
@@ -13,6 +15,9 @@ func addRoutes(
 	authUc auth.AuthUsecase,
 	kycH *kyc.Handler,
 	orderSvc order.Service,
+	walletUc wallet.WalletUsecase,
+	adminWalletUc wallet.AdminWalletUsecase,
+	marketHub *market.Hub,
 	tokenSvc auth.TokenService,
 ) {
 	mux.Handle("/", http.NotFoundHandler())
@@ -53,4 +58,22 @@ func addRoutes(
 	// ── Orders (JWT required) ─────────────────────────────────────────────────
 	mux.Handle("POST /api/v1/orders",               jwt(order.HandleOrder(orderSvc)))
 	mux.Handle("DELETE /api/v1/orders/{orderID}",   jwt(order.HandleCancelOrder(orderSvc)))
+
+	// ── Wallet — user facing (JWT required) ───────────────────────────────────
+	mux.Handle("GET /api/v1/wallet/balances",            jwt(wallet.HandleGetBalances(walletUc)))
+	mux.Handle("GET /api/v1/wallet/balances/{currency}", jwt(wallet.HandleGetBalance(walletUc)))
+	mux.Handle("POST /api/v1/wallet/deposit",            jwt(wallet.HandleInitiateDeposit(walletUc)))
+	mux.Handle("POST /api/v1/wallet/withdraw",           jwt(wallet.HandleInitiateWithdrawal(walletUc)))
+	mux.Handle("GET /api/v1/wallet/transactions",        jwt(wallet.HandleGetTransactions(walletUc)))
+
+	// ── Wallet — payment provider webhook (public; verify signature in prod) ───
+	mux.Handle("POST /api/v1/wallet/deposit/webhook", wallet.HandleDepositWebhook(walletUc))
+
+	// ── Wallet — admin facing (JWT + admin role) ──────────────────────────────
+	mux.Handle("GET /api/v1/admin/wallet/withdrawals",                       jwt(admin(wallet.HandleAdminListWithdrawals(adminWalletUc))))
+	mux.Handle("POST /api/v1/admin/wallet/withdrawals/{withdrawal_id}/approve", jwt(admin(wallet.HandleAdminApproveWithdrawal(adminWalletUc))))
+	mux.Handle("POST /api/v1/admin/wallet/withdrawals/{withdrawal_id}/reject",  jwt(admin(wallet.HandleAdminRejectWithdrawal(adminWalletUc))))
+
+	// ── Market data (public real-time WebSocket feed) ─────────────────────────
+	mux.Handle("/api/v1/market/ws", market.HandleWebSocket(marketHub))
 }

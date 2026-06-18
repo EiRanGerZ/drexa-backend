@@ -19,10 +19,14 @@ import (
 	kycRepo "drexa/internal/kyc/repository"
 	kycSvc "drexa/internal/kyc/service"
 	kycUc "drexa/internal/kyc/usecase"
+	"drexa/internal/market"
 	"drexa/internal/matching"
 	"drexa/internal/order"
 	orderRepo "drexa/internal/order/repository"
 	"drexa/internal/platform/middleware"
+	walletRepo "drexa/internal/wallet/repository"
+	walletSvc "drexa/internal/wallet/service"
+	walletUc "drexa/internal/wallet/usecase"
 	"drexa/pkg/config"
 )
 
@@ -90,9 +94,23 @@ func NewServer(cfg *config.Config, db *gorm.DB) *Server {
 	matchingEngine  := matching.NewEngine()
 	orderService    := order.NewService(orderRepository, pairService, matchingEngine)
 
+	// ── Wallet domain ─────────────────────────────────────────────────────────
+	walletRepository     := walletRepo.NewWalletRepository(db)
+	txRepository         := walletRepo.NewTransactionRepository(db)
+	depositRepository    := walletRepo.NewDepositRepository(db)
+	withdrawalRepository := walletRepo.NewWithdrawalRepository(db)
+	paymentService       := walletSvc.NewNullPaymentService()
+	walletUsecase        := walletUc.NewWalletUsecase(walletRepository, txRepository, depositRepository, withdrawalRepository, paymentService)
+	adminWalletUsecase   := walletUc.NewAdminWalletUsecase(walletRepository, txRepository, withdrawalRepository, paymentService)
+
+	// ── Market data (real-time WebSocket feed) ─────────────────────────────────
+	marketHub := market.NewHub()
+	go marketHub.Run()
+	go market.NewBinanceWSClient(marketHub).Run()
+
 	// ── HTTP ──────────────────────────────────────────────────────────────────
 	mux := http.NewServeMux()
-	addRoutes(mux, authUsecase, kycHandler, orderService, tokenService)
+	addRoutes(mux, authUsecase, kycHandler, orderService, walletUsecase, adminWalletUsecase, marketHub, tokenService)
 
 	handler := middleware.RequestID(mux)
 

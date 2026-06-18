@@ -3,93 +3,145 @@ package wallet
 import (
 	"errors"
 	"time"
+
+	"gorm.io/gorm"
 )
 
 // ─── Enums ───────────────────────────────────────────────────────────────────
 
+// CurrencyCode is a defined type to prevent arbitrary string values
+type CurrencyCode string
+
+const (
+	CurrencyIDR CurrencyCode = "IDR"
+	CurrencyUSD CurrencyCode = "USD"
+	CurrencyBTC CurrencyCode = "BTC"
+	CurrencyETH CurrencyCode = "ETH"
+)
+
+// WalletStatus is a defined type to control wallet lifecycle
+type WalletStatus string
+
+const (
+	WalletStatusActive    WalletStatus = "active"
+	WalletStatusSuspended WalletStatus = "suspended"
+	WalletStatusClosed    WalletStatus = "closed"
+)
+
+// TransactionType describes the direction and nature of a balance movement
 type TransactionType string
 
 const (
-	TxDeposit    TransactionType = "deposit"
-	TxWithdrawal TransactionType = "withdrawal"
-	TxTradeBuy   TransactionType = "trade_buy"
-	TxTradeSell  TransactionType = "trade_sell"
-	TxFee        TransactionType = "fee"
-	TxP2PEscrow  TransactionType = "p2p_escrow"
-	TxP2PRelease TransactionType = "p2p_release"
+	TxTypeDeposit    TransactionType = "deposit"
+	TxTypeWithdrawal TransactionType = "withdrawal"
+	TxTypeTransfer   TransactionType = "transfer"
+	TxTypeFee        TransactionType = "fee"
+	TxTypeReversal   TransactionType = "reversal"
 )
 
+// TransactionStatus tracks the lifecycle of a transaction
 type TransactionStatus string
 
 const (
-	TxPending   TransactionStatus = "pending"
-	TxConfirmed TransactionStatus = "confirmed"
-	TxFailed    TransactionStatus = "failed"
-)
-
-type EntryType string
-
-const (
-	EntryDebit  EntryType = "debit"
-	EntryCredit EntryType = "credit"
+	TxStatusPending   TransactionStatus = "pending"
+	TxStatusCompleted TransactionStatus = "completed"
+	TxStatusFailed    TransactionStatus = "failed"
+	TxStatusReversed  TransactionStatus = "reversed"
 )
 
 // ─── Entities ────────────────────────────────────────────────────────────────
 
-// Wallet holds a user's balance for a single currency.
-// Balances are derived from ledger entries — never modified directly.
+// Wallet represents a user's balance account for a specific currency.
+// Balance is stored in the smallest unit (cents for IDR, satoshi for BTC).
 type Wallet struct {
-	WalletID         string  `gorm:"primaryKey;column:wallet_id"`
-	UserID           string  `gorm:"column:user_id;index"`
-	WalletAddress    string  `gorm:"column:wallet_address;default:''"`
-	Currency         string  `gorm:"column:currency"`                     // e.g. "IDR", "BTC", "ETH"
-	AvailableBalance float64 `gorm:"column:available_balance;type:numeric(36,18);default:0"`
-	LockedBalance    float64 `gorm:"column:locked_balance;type:numeric(36,18);default:0"`
-	CreatedAt        time.Time `gorm:"column:created_at;autoCreateTime"`
+	WalletID   string         `gorm:"primaryKey;column:wallet_id"`
+	UserID     string         `gorm:"column:user_id;index"`     // FK to users
+	Currency   CurrencyCode   `gorm:"column:currency;index"`    // e.g. "IDR", "BTC"
+	Balance    int64          `gorm:"column:balance;default:0"` // stored in smallest unit (cents/satoshi)
+	Locked     int64          `gorm:"column:locked;default:0"`  // amount reserved for open orders
+	Status     WalletStatus   `gorm:"column:status;default:active"`
+	CreatedAt  time.Time      `gorm:"column:created_at;autoCreateTime"`
+	ModifiedAt time.Time      `gorm:"column:modified_at;autoUpdateTime"`
+	DeletedAt  gorm.DeletedAt `gorm:"column:deleted_at;index"` // soft delete — OJK audit trail
 }
 
-// LedgerEntry is one side of a double-entry bookkeeping record.
-// Every mutation produces exactly two entries: one debit and one credit.
-type LedgerEntry struct {
-	EntryID     string    `gorm:"primaryKey;column:entry_id"`
-	WalletID    string    `gorm:"column:wallet_id;index"`
-	Type        EntryType `gorm:"column:type"`
-	Amount      float64   `gorm:"column:amount;type:numeric(36,18)"`
-	Currency    string    `gorm:"column:currency"`
-	RefType     string    `gorm:"column:ref_type"` // e.g. "trade", "deposit", "withdrawal"
-	RefID       string    `gorm:"column:ref_id"`
-	Description string    `gorm:"column:description;default:''"`
-	CreatedAt   time.Time `gorm:"column:created_at;autoCreateTime"`
+// Available returns the spendable balance (balance minus locked amount)
+func (w *Wallet) Available() int64 {
+	return w.Balance - w.Locked
 }
 
-// Transaction is the high-level record of a user-visible financial event.
+// Transaction records every balance movement for full audit trail (OJK requirement)
 type Transaction struct {
-	TransactionID string            `gorm:"primaryKey;column:transaction_id"`
-	UserID        string            `gorm:"column:user_id;index"`
+	TxID          string            `gorm:"primaryKey;column:tx_id"`
+	WalletID      string            `gorm:"column:wallet_id;index"` // FK to wallets
+	UserID        string            `gorm:"column:user_id;index"`   // denormalized for faster user history queries
 	Type          TransactionType   `gorm:"column:type"`
-	Amount        float64           `gorm:"column:amount;type:numeric(36,18)"`
-	Currency      string            `gorm:"column:currency"`
 	Status        TransactionStatus `gorm:"column:status;default:pending"`
-	TxHash        *string           `gorm:"column:tx_hash"` // on-chain hash for crypto transactions
-	Fee           float64           `gorm:"column:fee;type:numeric(36,18);default:0"`
+	Amount        int64             `gorm:"column:amount"` // always positive; direction inferred from Type
+	BalanceBefore int64             `gorm:"column:balance_before"`
+	BalanceAfter  int64             `gorm:"column:balance_after"`
+	Currency      CurrencyCode      `gorm:"column:currency"`
+	RefID         string            `gorm:"column:ref_id"`             // external reference: payment ID, order ID, etc.
+	Description   string            `gorm:"column:description"`
+	Metadata      string            `gorm:"column:metadata;type:text"` // JSON blob for provider-specific data
 	CreatedAt     time.Time         `gorm:"column:created_at;autoCreateTime"`
 }
 
-// DepositAddress is a per-user per-currency crypto deposit address derived from an HD wallet.
-type DepositAddress struct {
-	ID              string    `gorm:"primaryKey;column:id"`
-	UserID          string    `gorm:"column:user_id;index"`
-	Currency        string    `gorm:"column:currency"`
-	Network         string    `gorm:"column:network"` // e.g. "ERC20", "TRC20"
-	Address         string    `gorm:"column:address;uniqueIndex"`
-	DerivationIndex int       `gorm:"column:derivation_index"`
-	CreatedAt       time.Time `gorm:"column:created_at;autoCreateTime"`
+// DepositRequest tracks a pending fiat deposit before it is confirmed by the payment provider
+type DepositRequest struct {
+	DepositID   string            `gorm:"primaryKey;column:deposit_id"`
+	UserID      string            `gorm:"column:user_id;index"`
+	WalletID    string            `gorm:"column:wallet_id;index"`
+	Amount      int64             `gorm:"column:amount"`
+	Currency    CurrencyCode      `gorm:"column:currency"`
+	Provider    string            `gorm:"column:provider"`                 // "xendit", "midtrans", etc.
+	ProviderRef string            `gorm:"column:provider_ref;uniqueIndex"` // provider's payment/session ID
+	Status      TransactionStatus `gorm:"column:status;default:pending"`
+	ExpiresAt   time.Time         `gorm:"column:expires_at"`
+	ConfirmedAt *time.Time        `gorm:"column:confirmed_at"`
+	CreatedAt   time.Time         `gorm:"column:created_at;autoCreateTime"`
+	ModifiedAt  time.Time         `gorm:"column:modified_at;autoUpdateTime"`
+}
+
+// WithdrawalRequest tracks a pending fiat withdrawal pending compliance review
+type WithdrawalRequest struct {
+	WithdrawalID    string            `gorm:"primaryKey;column:withdrawal_id"`
+	UserID          string            `gorm:"column:user_id;index"`
+	WalletID        string            `gorm:"column:wallet_id;index"`
+	Amount          int64             `gorm:"column:amount"`
+	Currency        CurrencyCode      `gorm:"column:currency"`
+	BankCode        string            `gorm:"column:bank_code"`      // e.g. "BCA", "BNI", "MANDIRI"
+	AccountNumber   string            `gorm:"column:account_number"` // encrypted before storage
+	AccountName     string            `gorm:"column:account_name"`
+	Status          TransactionStatus `gorm:"column:status;default:pending"`
+	ProviderRef     string            `gorm:"column:provider_ref"` // disbursement ID from provider
+	RejectionReason string            `gorm:"column:rejection_reason"`
+	ProcessedAt     *time.Time        `gorm:"column:processed_at"`
+	CreatedAt       time.Time         `gorm:"column:created_at;autoCreateTime"`
+	ModifiedAt      time.Time         `gorm:"column:modified_at;autoUpdateTime"`
 }
 
 // ─── Domain Errors ───────────────────────────────────────────────────────────
 
 var (
+	// Wallet
 	ErrWalletNotFound      = errors.New("wallet not found")
-	ErrInsufficientBalance = errors.New("insufficient available balance")
+	ErrWalletSuspended     = errors.New("wallet is suspended")
+	ErrWalletClosed        = errors.New("wallet is closed")
+	ErrInsufficientBalance = errors.New("insufficient balance")
+	ErrInvalidAmount       = errors.New("amount must be greater than zero")
+	ErrCurrencyMismatch    = errors.New("currency mismatch between wallets")
+
+	// Deposit
+	ErrDepositNotFound    = errors.New("deposit request not found")
+	ErrDepositExpired     = errors.New("deposit request has expired")
+	ErrDepositAlreadyDone = errors.New("deposit already confirmed or failed")
+
+	// Withdrawal
+	ErrWithdrawalNotFound  = errors.New("withdrawal request not found")
+	ErrWithdrawalPending   = errors.New("a withdrawal is already pending for this wallet")
+	ErrWithdrawalAmountMin = errors.New("withdrawal amount is below the minimum")
+
+	// Transaction
 	ErrTransactionNotFound = errors.New("transaction not found")
 )
