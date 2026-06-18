@@ -56,12 +56,16 @@ type CryptoWalletUsecase interface {
 type CryptoProvider interface {
 	// GenerateWallet creates a new HD wallet for a chain and returns its extended public key.
 	GenerateWallet(ctx context.Context, chain string) (xpub string, err error)
+	// GetXpub returns the configured master extended public key for the chain.
+	GetXpub(chain string) (string, error)
 	// DeriveAddress derives the receiving address for an xpub at a derivation index.
 	DeriveAddress(ctx context.Context, chain, xpub string, index int) (address string, err error)
 	// GetBalance returns the address's confirmed balance as a decimal string (in the coin's main unit).
 	GetBalance(ctx context.Context, chain, address string) (balance string, err error)
 	// SendTransaction sends a crypto transaction and returns the transaction hash.
 	SendTransaction(ctx context.Context, chain string, amount string, toAddress string) (txHash string, err error)
+	// SubscribeAddressWebhook subscribes an address to receive webhooks for deposits.
+	SubscribeAddressWebhook(ctx context.Context, chain, address string) (subscriptionID string, err error)
 }
 
 // CryptoAsset is the user-facing view of an on-chain asset.

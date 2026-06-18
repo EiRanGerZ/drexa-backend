@@ -59,8 +59,11 @@ type SendGridConfig struct {
 
 type TatumConfig struct {
 	APIKey        string
-	BTCGatewayURL string
-	ETHGatewayURL string
+	BTCGatewayURL  string
+	ETHGatewayURL  string
+	WebhookBaseURL string
+	BTCXpub        string
+	ETHXpub       string
 	BTCAddress    string
 	BTCPrivateKey string
 	ETHPrivateKey string
@@ -119,8 +122,11 @@ func Load() *Config {
 		},
 		Tatum: TatumConfig{
 			APIKey:        viper.GetString("TATUM_TESTNET_API_KEY"),
-			BTCGatewayURL: viper.GetString("TATUM_BTC_GATEWAY_URL"),
-			ETHGatewayURL: viper.GetString("TATUM_ETH_GATEWAY_URL"),
+			BTCGatewayURL:  viper.GetString("TATUM_BTC_GATEWAY_URL"),
+			ETHGatewayURL:  viper.GetString("TATUM_ETH_GATEWAY_URL"),
+			WebhookBaseURL: viper.GetString("TATUM_WEBHOOK_BASE_URL"),
+			BTCXpub:        viper.GetString("BTC_MASTER_XPUB"),
+			ETHXpub:       viper.GetString("ETH_MASTER_XPUB"),
 			BTCAddress:    viper.GetString("BTC_MASTER_ADDRESS"),
 			BTCPrivateKey: viper.GetString("BTC_MASTER_PRIVATE_KEY"),
 			ETHPrivateKey: viper.GetString("ETH_MASTER_PRIVATE_KEY"),

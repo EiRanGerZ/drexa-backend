@@ -457,16 +457,19 @@ func (uc *walletUsecase) InitiateCryptoWithdrawal(ctx context.Context, userID st
 	// Step 2: Send Crypto via Provider (Tatum) outside of DB lock
 	// Convert currency to chain name. We can import chains map or assume provider accepts currency string for now
 	chain := ""
+	var amountStr string
 	if req.Currency == wallet.CurrencyBTC {
 		chain = "bitcoin"
+		amountStr = fmt.Sprintf("%.8f", float64(req.Amount)/100_000_000.0)
 	} else if req.Currency == wallet.CurrencyETH {
 		chain = "ethereum"
+		amountStr = fmt.Sprintf("%.18f", float64(req.Amount)/1_000_000_000_000_000_000.0)
 	} else {
 		// Should not happen if correctly gated
 		return txDebit, errors.New("unsupported crypto currency")
 	}
 
-	_, err = uc.cryptoProvider.SendTransaction(ctx, chain, fmt.Sprintf("%d", req.Amount), req.ToAddress)
+	_, err = uc.cryptoProvider.SendTransaction(ctx, chain, amountStr, req.ToAddress)
 
 	// Step 3: Settle the outcome
 	_ = uc.tx.Do(ctx, func(ctx context.Context) error {
