@@ -87,7 +87,7 @@ type OrderBookLevel struct {
 // (bids highest first, asks lowest first). Version is the engine's mutation
 // counter at snapshot time, for gap detection and update de-duplication.
 type OrderBookSnapshot struct {
-	PairID  string           `json:"pair"`
+	PairID  string           `json:"pair_id"`
 	Version uint64           `json:"version"`
 	Bids    []OrderBookLevel `json:"bids"`
 	Asks    []OrderBookLevel `json:"asks"`

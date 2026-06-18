@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 
 	"github.com/rs/zerolog/log"
 
@@ -88,6 +89,44 @@ func HandleOrder(orderSvc Service) http.Handler {
 		}
 
 		sendJSON(w, http.StatusCreated, order)
+	})
+}
+
+// HandleOrderBook returns a depth snapshot of a pair's resting book.
+// Public market data — no auth required.
+// Route: GET /api/v1/market/orderbook/{pairID}?depth=50
+func HandleOrderBook(orderSvc Service) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		pairID := r.PathValue("pairID")
+		if pairID == "" {
+			sendJSON(w, http.StatusBadRequest, MessageResponse{Error: "pairID is required"})
+			return
+		}
+
+		// Default to 50 levels per side; clamp to a sane maximum.
+		depth := 50
+		if q := r.URL.Query().Get("depth"); q != "" {
+			if n, err := strconv.Atoi(q); err == nil && n > 0 {
+				depth = n
+			}
+		}
+		if depth > 500 {
+			depth = 500
+		}
+
+		ob, err := orderSvc.OrderBookDepth(r.Context(), pairID, depth)
+		if err != nil {
+			switch {
+			case errors.Is(err, ErrPairNotFound):
+				sendJSON(w, http.StatusNotFound, MessageResponse{Error: err.Error()})
+			default:
+				log.Ctx(r.Context()).Error().Err(err).Msg("order: orderbook failed")
+				sendJSON(w, http.StatusInternalServerError, MessageResponse{Error: "internal server error"})
+			}
+			return
+		}
+
+		sendJSON(w, http.StatusOK, ob)
 	})
 }
 

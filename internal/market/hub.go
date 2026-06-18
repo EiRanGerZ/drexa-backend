@@ -3,8 +3,20 @@ package market
 import (
 	"log"
 	"sync"
+	"time"
 
 	"github.com/gorilla/websocket"
+)
+
+const (
+	// writeWait is the time allowed to write a message to the peer.
+	writeWait = 10 * time.Second
+	// pongWait is how long we wait for a pong before considering the peer dead.
+	pongWait = 60 * time.Second
+	// pingPeriod is how often we ping the peer. Must be less than pongWait.
+	pingPeriod = (pongWait * 9) / 10
+	// maxMessageSize caps inbound frames; this stream is read-only for clients.
+	maxMessageSize = 512
 )
 
 // Client represents a single connected websocket client
@@ -63,37 +75,57 @@ func (h *Hub) Run() {
 	}
 }
 
-// WritePump pumps messages from the hub to the websocket connection.
+// WritePump pumps messages from the hub to the websocket connection. It also
+// sends periodic pings so idle connections (no market updates for a while) are
+// kept alive and dead peers are detected via the write deadline.
 func (c *Client) WritePump() {
+	ticker := time.NewTicker(pingPeriod)
 	defer func() {
+		ticker.Stop()
 		c.Conn.Close()
 	}()
 	for {
-		message, ok := <-c.Send
-		if !ok {
-			// The hub closed the channel.
-			c.Conn.WriteMessage(websocket.CloseMessage, []byte{})
-			return
-		}
+		select {
+		case message, ok := <-c.Send:
+			c.Conn.SetWriteDeadline(time.Now().Add(writeWait))
+			if !ok {
+				// The hub closed the channel.
+				c.Conn.WriteMessage(websocket.CloseMessage, []byte{})
+				return
+			}
 
-		w, err := c.Conn.NextWriter(websocket.TextMessage)
-		if err != nil {
-			return
-		}
-		w.Write(message)
+			w, err := c.Conn.NextWriter(websocket.TextMessage)
+			if err != nil {
+				return
+			}
+			w.Write(message)
 
-		if err := w.Close(); err != nil {
-			return
+			if err := w.Close(); err != nil {
+				return
+			}
+		case <-ticker.C:
+			c.Conn.SetWriteDeadline(time.Now().Add(writeWait))
+			if err := c.Conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+				return
+			}
 		}
 	}
 }
 
-// ReadPump ignores incoming messages as this is a read-only stream for frontend
+// ReadPump ignores incoming messages as this is a read-only stream for the
+// frontend, but it must run so control frames (pong/close) are processed. Each
+// pong refreshes the read deadline, keeping a healthy connection open.
 func (c *Client) ReadPump() {
 	defer func() {
 		c.Hub.Unregister <- c
 		c.Conn.Close()
 	}()
+	c.Conn.SetReadLimit(maxMessageSize)
+	c.Conn.SetReadDeadline(time.Now().Add(pongWait))
+	c.Conn.SetPongHandler(func(string) error {
+		c.Conn.SetReadDeadline(time.Now().Add(pongWait))
+		return nil
+	})
 	for {
 		_, _, err := c.Conn.ReadMessage()
 		if err != nil {
