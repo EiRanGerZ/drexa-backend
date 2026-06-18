@@ -99,10 +99,14 @@ func NewServer(cfg *config.Config, db *gorm.DB) *Server {
 	txRepository         := walletRepo.NewTransactionRepository(db)
 	depositRepository    := walletRepo.NewDepositRepository(db)
 	withdrawalRepository := walletRepo.NewWithdrawalRepository(db)
+	cryptoAddressRepo    := walletRepo.NewCryptoAddressRepository(db)
 	paymentService       := walletSvc.NewNullPaymentService()
+	cryptoProvider       := walletSvc.NewTatumService(cfg.Tatum.APIKey, "https://api.tatum.io")
 	txManager            := walletRepo.NewTxManager(db)
-	walletUsecase        := walletUc.NewWalletUsecase(walletRepository, txRepository, depositRepository, withdrawalRepository, paymentService, txManager)
+	
+	walletUsecase        := walletUc.NewWalletUsecase(walletRepository, txRepository, depositRepository, withdrawalRepository, paymentService, cryptoProvider, txManager)
 	adminWalletUsecase   := walletUc.NewAdminWalletUsecase(walletRepository, txRepository, withdrawalRepository, paymentService, txManager)
+	cryptoWalletUsecase  := walletUc.NewCryptoWalletUsecase(cryptoAddressRepo, walletRepository, txRepository, txManager, cryptoProvider, false)
 
 	// ── Market data (real-time WebSocket feed) ─────────────────────────────────
 	marketHub := market.NewHub()
@@ -111,7 +115,7 @@ func NewServer(cfg *config.Config, db *gorm.DB) *Server {
 
 	// ── HTTP ──────────────────────────────────────────────────────────────────
 	mux := http.NewServeMux()
-	addRoutes(mux, authUsecase, kycHandler, orderService, walletUsecase, adminWalletUsecase, marketHub, tokenService)
+	addRoutes(mux, authUsecase, kycHandler, orderService, walletUsecase, adminWalletUsecase, cryptoWalletUsecase, marketHub, tokenService)
 
 	handler := middleware.RequestID(mux)
 

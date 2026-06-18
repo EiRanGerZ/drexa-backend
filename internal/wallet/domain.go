@@ -130,8 +130,33 @@ type CryptoAddress struct {
 	Chain           string       `gorm:"column:chain;size:32"`    // e.g. "bitcoin", "ethereum"
 	Address         string       `gorm:"column:address;size:128;index"`
 	Xpub            string       `gorm:"column:xpub;size:255"`    // extended public key (deposit-only; cannot spend)
-	DerivationIndex int          `gorm:"column:derivation_index"`
-	CreatedAt       time.Time    `gorm:"column:created_at;autoCreateTime"`
+	DerivationIndex int       `gorm:"column:derivation_index"`
+	CreatedAt       time.Time `gorm:"column:created_at;autoCreateTime"`
+}
+
+// ─── Sharedwallet DTOs ────────────────────────────────────────────────────────────
+
+type WebhookPayload struct {
+	Address       string `json:"address"`
+	Amount        string `json:"amount"` // decimal string
+	Asset         string `json:"asset"`
+	BlockNumber   int    `json:"blockNumber"`
+	Confirmations int    `json:"confirmations"`
+	TxId          string `json:"txId"`
+	Type          string `json:"type"`
+}
+
+type InternalTransferRequest struct {
+	FromUserID string       `json:"from_user_id"`
+	ToUserID   string       `json:"to_user_id"`
+	Currency   CurrencyCode `json:"currency"`
+	Amount     int64        `json:"amount"` // in smallest unit
+}
+
+type InitiateCryptoWithdrawalRequest struct {
+	Amount    int64        `json:"amount"` // in smallest unit
+	Currency  CurrencyCode `json:"currency"`
+	ToAddress string       `json:"to_address"`
 }
 
 // ─── Domain Errors ───────────────────────────────────────────────────────────
