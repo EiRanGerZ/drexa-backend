@@ -14,6 +14,7 @@ type Config struct {
 	Twilio   TwilioConfig
 	SendGrid SendGridConfig
 	Tatum    TatumConfig
+	Stripe   StripeConfig
 }
 
 type AppConfig struct {
@@ -52,6 +53,12 @@ type SendGridConfig struct {
 
 type TatumConfig struct {
 	APIKey  string
+}
+
+type StripeConfig struct {
+	SecretKey      string
+	WebhookSecret  string
+	PublishableKey string
 }
 
 func Load() *Config {
@@ -100,6 +107,11 @@ func Load() *Config {
 		},
 		Tatum: TatumConfig{
 			APIKey: viper.GetString("TATUM_TESTNET_API_KEY"),
+		},
+		Stripe: StripeConfig{
+			SecretKey:      viper.GetString("STRIPE_SECRET_KEY"),
+			WebhookSecret:  viper.GetString("STRIPE_WEBHOOK_SECRET"),
+			PublishableKey: viper.GetString("STRIPE_PUBLISHABLE_KEY"),
 		},
 	}
 }
