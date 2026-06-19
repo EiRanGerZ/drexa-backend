@@ -16,7 +16,6 @@ import (
 	authRepo "drexa/internal/auth/repository"
 	authSvc "drexa/internal/auth/service"
 	authUc "drexa/internal/auth/usecase"
-	"drexa/internal/checkout"
 	"drexa/internal/kyc"
 	kycRepo "drexa/internal/kyc/repository"
 	kycSvc "drexa/internal/kyc/service"
@@ -279,19 +278,7 @@ func NewServer(cfg *config.Config, db *gorm.DB) *Server {
 	kycUsecase := kycUc.New(kycRepository, kycUserSvc)
 	adminKycUsecase := kycUc.NewAdmin(kycRepository, kycUserSvc, kycNotifSvc)
 
-	// Didit identity verification (optional — only when an API key is configured).
-	var diditKycUsecase kyc.DiditUsecase
-	if cfg.Didit.APIKey != "" {
-		// Didit returns the user to this frontend route after the hosted flow.
-		diditCallback := cfg.SendGrid.AppURL + "/verify/done"
-		diditService := kycSvc.NewDiditService(
-			cfg.Didit.APIKey,
-			cfg.Didit.WebhookSecret,
-			cfg.Didit.WorkflowID,
-			diditCallback,
-		)
-		diditKycUsecase = kycUc.NewDidit(kycRepository, kycUserSvc, kycNotifSvc, diditService)
-	}
+
 
 	getUserID := func(r *http.Request) string {
 		claims, ok := auth.UserFromContext(r.Context())
@@ -300,7 +287,7 @@ func NewServer(cfg *config.Config, db *gorm.DB) *Server {
 		}
 		return claims.UserID
 	}
-	kycHandler := kyc.NewHandler(kycUsecase, adminKycUsecase, diditKycUsecase, getUserID)
+	kycHandler := kyc.NewHandler(kycUsecase, adminKycUsecase, nil, getUserID)
 
 	// ── Order domain ──────────────────────────────────────────────────────────
 	orderRepository := orderRepo.New(db)
@@ -317,12 +304,7 @@ func NewServer(cfg *config.Config, db *gorm.DB) *Server {
 	if cfg.Stripe.SecretKey != "" {
 		paymentService = walletSvc.NewStripePaymentService(cfg.Stripe.SecretKey, cfg.SendGrid.AppURL)
 	}
-	// Withdrawal payouts go through PayPal (separate provider from Stripe deposits).
-	// Falls back to a no-op service when PayPal credentials aren't configured.
 	disbursementService := walletSvc.NewNullDisbursementService()
-	if cfg.PayPal.ClientID != "" && cfg.PayPal.Secret != "" {
-		disbursementService = walletSvc.NewPayPalDisbursementService(cfg.PayPal.ClientID, cfg.PayPal.Secret, cfg.PayPal.BaseURL)
-	}
 	cryptoProvider       := walletSvc.NewTatumService(cfg.Tatum, "https://api.tatum.io")
 	txManager            := walletRepo.NewTxManager(db)
 
@@ -355,6 +337,7 @@ func NewServer(cfg *config.Config, db *gorm.DB) *Server {
 	tickerFeed := market.NewTickerFeed(marketHub, pairLister)
 	go tickerFeed.Run(context.Background())
 
+
 	// ── P2P marketplace (on-chain smart-contract escrow) ───────────────────────
 	p2pRepository := p2pRepo.New(db)
 	var escrowClient p2pChain.EscrowClient
@@ -378,23 +361,9 @@ func NewServer(cfg *config.Config, db *gorm.DB) *Server {
 	p2pAdminUsecase := p2pUc.NewAdmin(p2pRepository, escrowClient, cfg.Escrow.ConfirmTimeout)
 	p2pHandler := p2p.NewHandler(p2pUsecase, p2pAdminUsecase, getUserID)
 
-	// ── Checkout domain ───────────────────────────────────────────────────────
-	var checkoutHandler *checkout.Handler
-	if cfg.Stripe.SecretKey != "" {
-		purchaseRepo := checkout.NewPurchaseRepository(db)
-		checkoutSvc := checkout.NewCheckoutService(
-			cfg.Stripe.SecretKey,
-			cfg.Stripe.WebhookSecret,
-			cfg.SendGrid.AppURL, // Reusing AppURL as the base URL
-			purchaseRepo,
-			userRepo,
-		)
-		checkoutHandler = checkout.NewHandler(checkoutSvc, getUserID)
-	}
-
 	// ── HTTP ──────────────────────────────────────────────────────────────────
 	mux := http.NewServeMux()
-	addRoutes(mux, cfg, authUsecase, kycHandler, orderService, walletUsecase, adminWalletUsecase, cryptoWalletUsecase, marketHub, tokenService, checkoutHandler, p2pHandler)
+	addRoutes(mux, cfg, authUsecase, kycHandler, orderService, walletUsecase, adminWalletUsecase, cryptoWalletUsecase, marketHub, tokenService, p2pHandler)
 
 	// CORS must run before everything else so it can answer preflight OPTIONS
 	// and attach credential headers to every response.

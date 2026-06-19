@@ -4,7 +4,6 @@ import (
 	"net/http"
 
 	"drexa/internal/auth"
-	"drexa/internal/checkout"
 	"drexa/internal/kyc"
 	"drexa/internal/market"
 	"drexa/internal/order"
@@ -24,7 +23,6 @@ func addRoutes(
 	cryptoWalletUc wallet.CryptoWalletUsecase,
 	marketHub *market.Hub,
 	tokenSvc auth.TokenService,
-	checkoutH *checkout.Handler,
 	p2pH *p2p.Handler,
 ) {
 	mux.Handle("/", http.NotFoundHandler())
@@ -32,12 +30,7 @@ func addRoutes(
 	jwt := auth.JWTMiddleware(tokenSvc)
 	admin := auth.RequireRole(auth.RoleAdmin)
 
-	// ── Checkout (Stripe Managed Payments) ────────────────────────────────────
-	if checkoutH != nil {
-		mux.Handle("POST /api/v1/checkout/product", jwt(admin(http.HandlerFunc(checkoutH.CreateProduct))))
-		mux.Handle("POST /api/v1/checkout/session", jwt(http.HandlerFunc(checkoutH.CreateSession)))
-		mux.Handle("POST /api/v1/checkout/webhook", http.HandlerFunc(checkoutH.Webhook))
-	}
+
 
 	// ── Public auth ───────────────────────────────────────────────────────────
 	mux.Handle("POST /api/v1/auth/register", auth.HandleRegister(authUc))
@@ -65,10 +58,7 @@ func addRoutes(
 	mux.Handle("POST /api/v1/kyc/submit", jwt(http.HandlerFunc(kycH.HandleSubmit)))
 	mux.Handle("GET /api/v1/kyc/status", jwt(http.HandlerFunc(kycH.HandleGetStatus)))
 
-	// ── KYC — Didit identity verification ─────────────────────────────────────
-	mux.Handle("POST /api/v1/kyc/didit/session", jwt(http.HandlerFunc(kycH.HandleStartDiditVerification)))
-	// Webhook is public; authenticated by the X-Signature-V2 HMAC, not JWT.
-	mux.Handle("POST /api/v1/kyc/didit/webhook", http.HandlerFunc(kycH.HandleDiditWebhook))
+
 
 	// ── KYC — admin facing (JWT + admin role) ─────────────────────────────────
 	mux.Handle("GET /api/v1/admin/kyc", jwt(admin(http.HandlerFunc(kycH.HandleAdminList))))
@@ -124,25 +114,25 @@ func addRoutes(
 	// OHLCV klines — proxied from Binance, no auth required.
 	mux.Handle("GET /api/v1/market/klines/{pairID}", market.HandleKlines())
 
-	// ── P2P marketplace (on-chain escrow) ─────────────────────────────────────
-	// Advertisements
-	mux.Handle("POST /api/v1/p2p/ads",            jwt(http.HandlerFunc(p2pH.CreateAd)))
-	mux.Handle("GET /api/v1/p2p/ads",             jwt(http.HandlerFunc(p2pH.ListAds)))
-	mux.Handle("GET /api/v1/p2p/ads/mine",        jwt(http.HandlerFunc(p2pH.MyAds)))
-	mux.Handle("GET /api/v1/p2p/ads/{id}",        jwt(http.HandlerFunc(p2pH.GetAd)))
-	mux.Handle("POST /api/v1/p2p/ads/{id}/status", jwt(http.HandlerFunc(p2pH.SetAdStatus)))
+	// ── P2P Marketplace (JWT required for most) ───────────────────────────────
+	mux.Handle("GET /api/v1/p2p/ads", jwt(http.HandlerFunc(p2pH.ListAds)))
+	mux.Handle("GET /api/v1/p2p/ads/{id}", jwt(http.HandlerFunc(p2pH.GetAd)))
+	mux.Handle("POST /api/v1/p2p/ads", jwt(http.HandlerFunc(p2pH.CreateAd)))
+	// GET /mine must come before /{id} to avoid collision
+	mux.Handle("GET /api/v1/p2p/ads/mine/list", jwt(http.HandlerFunc(p2pH.MyAds))) // note: standard net/http mux does exact match or trailing slash
+	mux.Handle("PATCH /api/v1/p2p/ads/{id}/status", jwt(http.HandlerFunc(p2pH.SetAdStatus)))
 
-	// Orders + escrow lifecycle
-	mux.Handle("POST /api/v1/p2p/orders",                jwt(http.HandlerFunc(p2pH.CreateOrder)))
-	mux.Handle("GET /api/v1/p2p/orders/mine",            jwt(http.HandlerFunc(p2pH.MyOrders)))
-	mux.Handle("GET /api/v1/p2p/orders/{id}",            jwt(http.HandlerFunc(p2pH.GetOrder)))
-	mux.Handle("GET /api/v1/p2p/orders/{id}/escrow",     jwt(http.HandlerFunc(p2pH.EscrowInfo)))
-	mux.Handle("POST /api/v1/p2p/orders/{id}/paid",      jwt(http.HandlerFunc(p2pH.MarkPaid)))
-	mux.Handle("POST /api/v1/p2p/orders/{id}/release",   jwt(http.HandlerFunc(p2pH.ReleaseOrder)))
-	mux.Handle("POST /api/v1/p2p/orders/{id}/cancel",    jwt(http.HandlerFunc(p2pH.CancelOrder)))
-	mux.Handle("POST /api/v1/p2p/orders/{id}/dispute",   jwt(http.HandlerFunc(p2pH.OpenDispute)))
+	mux.Handle("POST /api/v1/p2p/orders", jwt(http.HandlerFunc(p2pH.CreateOrder)))
+	mux.Handle("GET /api/v1/p2p/orders/mine/list", jwt(http.HandlerFunc(p2pH.MyOrders)))
+	mux.Handle("GET /api/v1/p2p/orders/{id}", jwt(http.HandlerFunc(p2pH.GetOrder)))
+	mux.Handle("GET /api/v1/p2p/orders/{id}/escrow", jwt(http.HandlerFunc(p2pH.EscrowInfo)))
+	mux.Handle("POST /api/v1/p2p/orders/{id}/pay", jwt(http.HandlerFunc(p2pH.MarkPaid)))
+	mux.Handle("POST /api/v1/p2p/orders/{id}/release", jwt(http.HandlerFunc(p2pH.ReleaseOrder)))
+	mux.Handle("POST /api/v1/p2p/orders/{id}/cancel", jwt(http.HandlerFunc(p2pH.CancelOrder)))
+	mux.Handle("POST /api/v1/p2p/orders/{id}/dispute", jwt(http.HandlerFunc(p2pH.OpenDispute)))
 
-	// P2P — admin dispute resolution (JWT + admin role)
-	mux.Handle("GET /api/v1/admin/p2p/disputes",                  jwt(admin(http.HandlerFunc(p2pH.AdminListDisputes))))
-	mux.Handle("POST /api/v1/admin/p2p/disputes/{id}/resolve",    jwt(admin(http.HandlerFunc(p2pH.AdminResolveDispute))))
+	// ── P2P Admin (JWT + Admin) ───────────────────────────────────────────────
+	mux.Handle("GET /api/v1/admin/p2p/disputes", jwt(admin(http.HandlerFunc(p2pH.AdminListDisputes))))
+	mux.Handle("POST /api/v1/admin/p2p/disputes/{id}/resolve", jwt(admin(http.HandlerFunc(p2pH.AdminResolveDispute))))
+
 }
